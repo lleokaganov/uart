@@ -1,6 +1,26 @@
 /* global React, ReactDOM, UARTParser */
 const { useEffect, useMemo, useRef, useState, useCallback } = React;
 
+// ── source mode persisted in localStorage ──────────────────────────────────
+const LS_MODE = 'bms-source';
+const LS_FILE = 'bms-source-file';
+function readMode() {
+  try {
+    const v = window.localStorage.getItem(LS_MODE);
+    return v === 'can' ? 'can' : 'rs485';
+  } catch { return 'rs485'; }
+}
+function readFile(mode) {
+  try {
+    const v = window.localStorage.getItem(LS_FILE);
+    const src = UARTParser.SOURCES[mode];
+    if (v && src && src.files.some((f) => f.value === v)) return v;
+    return src ? src.defaultFile : 'data/sample.txt';
+  } catch { return 'data/sample.txt'; }
+}
+function writeMode(m) { try { window.localStorage.setItem(LS_MODE, m); } catch {} }
+function writeFile(f) { try { window.localStorage.setItem(LS_FILE, f); } catch {} }
+
 // ────────────────────────────────────────────────────────────────────────────
 // Pack SVG — a tall, slightly-tapered cell shape with terminal nub, a label
 // area, and a fluid level we tint based on charge state. No icons. No badges.
@@ -109,23 +129,38 @@ function CellSpark({ data, warn }) {
 // Main app — single screen, three numbers, swipe to scrub, pinch/scroll to zoom
 // ────────────────────────────────────────────────────────────────────────────
 function App() {
+  // ── source mode (RS485 ↔ CAN), persisted in localStorage
+  const [sourceMode, setSourceMode] = useState(() => readMode());
+  const [sourceFile, setSourceFile] = useState(() => readFile(readMode()));
+  const SOURCE = UARTParser.SOURCES[sourceMode] || UARTParser.SOURCES.rs485;
+  const isCan = sourceMode === 'can';
+
   // ── data
-  const [parsed, setParsed] = useState({ bytes: new Uint8Array(0), lineRanges: [] });
+  const [parsed, setParsed] = useState({ bytes: new Uint8Array(0), lineRanges: [], frames: [] });
   const [bootDone, setBootDone] = useState(false);
   useEffect(() => {
-    fetch('data/sample.txt')
+    setBootDone(false);
+    fetch(sourceFile)
       .then((r) => r.text())
       .then((txt) => {
-        setParsed(UARTParser.parseSampleText(txt));
+        setParsed(SOURCE.parse(txt));
         setBootDone(true);
       })
       .catch(() => setBootDone(true));
-  }, []);
+  }, [sourceFile, sourceMode]);
 
   // Decode all frames once, up front. This is consumer view — playback is just
   // a virtual cursor across the full capture, not a streaming simulation.
   const allFrames = useMemo(() => {
-    if (!parsed.bytes.length) return [];
+    if (isCan) {
+      const out = parsed.frames || [];
+      out.forEach((f, i) => {
+        if (!f.interp) f.interp = UARTParser.interpretCan(f);
+        f.ts = i * 47;
+      });
+      return out;
+    }
+    if (!parsed.bytes || !parsed.bytes.length) return [];
     const out = [];
     let i = 0, n = 0;
     while (i < parsed.bytes.length) {
@@ -136,7 +171,18 @@ function App() {
       out.push(f); i = f.end; n++;
     }
     return out;
-  }, [parsed]);
+  }, [parsed, isCan]);
+
+  const cycleSource = useCallback(() => {
+    setSourceMode((cur) => {
+      const next = cur === 'rs485' ? 'can' : 'rs485';
+      writeMode(next);
+      const nf = (UARTParser.SOURCES[next] || UARTParser.SOURCES.rs485).defaultFile;
+      setSourceFile(nf);
+      writeFile(nf);
+      return next;
+    });
+  }, []);
 
   // ── virtual time cursor
   // 1.0 = present, 0 = start of capture. The user drags horizontally to scrub.
@@ -201,24 +247,34 @@ function App() {
   }, [t, allFrames.length]);
 
   const latestReply = useMemo(() => {
+    const want = isCan ? 'can-bms-tpdo1' : 'bms-cells';
     for (let i = frameCutoff; i >= 0; i--) {
       const f = allFrames[i];
-      if (f && f.interp.kind === 'bms-cells') return f;
+      if (f && f.interp.kind === want) return f;
     }
     return null;
-  }, [allFrames, frameCutoff]);
+  }, [allFrames, frameCutoff, isCan]);
 
   const latestInfo = useMemo(() => {
+    if (isCan) {
+      for (let i = frameCutoff; i >= 0; i--) {
+        const f = allFrames[i];
+        if (f && f.interp.kind === 'can-station-id' && f.interp.model) return f;
+      }
+      return null;
+    }
     for (let i = frameCutoff; i >= 0; i--) {
       const f = allFrames[i];
       if (f && f.interp.kind === 'bms-info') return f;
     }
     return null;
-  }, [allFrames, frameCutoff]);
+  }, [allFrames, frameCutoff, isCan]);
 
-  // history of cells across the whole capture (for single-cell view)
+  // history of cells across the whole capture (for single-cell view).
+  // Empty in CAN mode — cell-level data is not transmitted on the PDO bus.
   const cellHistory = useMemo(() => {
     const series = Array.from({ length: 20 }, () => []);
+    if (isCan) return series;
     allFrames.forEach((f, i) => {
       if (i > frameCutoff) return;
       if (f.interp.kind !== 'bms-cells') return;
@@ -227,7 +283,7 @@ function App() {
       });
     });
     return series.map((s) => s.slice(-160));
-  }, [allFrames, frameCutoff]);
+  }, [allFrames, frameCutoff, isCan]);
 
   const v   = latestReply?.interp?.voltage;
   const a   = latestReply?.interp?.current ?? 0;
@@ -248,6 +304,7 @@ function App() {
   // outlier detection — flag a cell if it's >25 mV below the median
   // (cells are 0.1 mV units so 250 raw = 25 mV)
   const outlierIdx = useMemo(() => {
+    if (isCan) return -1;
     const present = cells.map((c, i) => ({ c, i })).filter((x) => x.c > 0);
     if (present.length < 4) return -1;
     const sorted = [...present].sort((x, y) => x.c - y.c);
@@ -258,14 +315,20 @@ function App() {
       if (d > worstDelta && d >= 250) { worstDelta = d; worst = i; }
     });
     return worst;
-  }, [cells]);
+  }, [cells, isCan]);
 
   // ── zoom navigation
   const [zoom, setZoom] = useState(0);
   const [pickedCell, setPickedCell] = useState(0);
 
-  // wheel/pinch to zoom in/out
+  // CAN mode has no per-cell data — clamp zoom to the pack view.
   useEffect(() => {
+    if (isCan && zoom !== 0) setZoom(0);
+  }, [isCan, zoom]);
+
+  // wheel/pinch to zoom in/out — disabled in CAN since there's nothing to zoom.
+  useEffect(() => {
+    if (isCan) return;
     const onWheel = (e) => {
       // pinch = ctrlKey under most browsers' trackpad gesture mapping
       if (Math.abs(e.deltaY) < 4) return;
@@ -279,7 +342,7 @@ function App() {
     };
     window.addEventListener('wheel', onWheel, { passive: false });
     return () => window.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [isCan]);
 
   // keyboard
   useEffect(() => {
@@ -328,6 +391,14 @@ function App() {
         <span>{timeLabel}</span>
       </div>
 
+      <button
+        className="src-pill"
+        onClick={(e) => { e.stopPropagation(); cycleSource(); }}
+        onPointerDown={(e) => e.stopPropagation()}
+        title="switch protocol source">
+        {sourceMode === 'rs485' ? 'RS485' : 'CAN'}
+      </button>
+
       <button className="hint-back" onClick={() => setZoom((z) => Math.max(0, z - 1))}>
         ◂ back
       </button>
@@ -357,23 +428,27 @@ function App() {
 
       {/* cell pack zoom */}
       <div className="cells-stage">
-        <div className="cell-row">
-          {cells.map((c, i) => {
-            const present = cells.filter((x) => x > 0);
-            const min = present.length ? Math.min(...present) : 0;
-            const max = present.length ? Math.max(...present) : 1;
-            const range = Math.max(1, max - min);
-            const fill = c > 0 ? 0.25 + ((c - min) / range) * 0.7 : 0.05;
-            return (
-              <div key={i}
-                   className={`cell-frame ${i === outlierIdx ? 'warn' : ''}`}
-                   onClick={() => { setPickedCell(i); setZoom(2); }}>
-                <div className="num">{String(i+1).padStart(2,'0')}</div>
-                <CellSVG fillPct={fill} warn={i === outlierIdx} />
-              </div>
-            );
-          })}
-        </div>
+        {isCan ? (
+          <div className="cells-empty">cell voltages not available on CAN</div>
+        ) : (
+          <div className="cell-row">
+            {cells.map((c, i) => {
+              const present = cells.filter((x) => x > 0);
+              const min = present.length ? Math.min(...present) : 0;
+              const max = present.length ? Math.max(...present) : 1;
+              const range = Math.max(1, max - min);
+              const fill = c > 0 ? 0.25 + ((c - min) / range) * 0.7 : 0.05;
+              return (
+                <div key={i}
+                     className={`cell-frame ${i === outlierIdx ? 'warn' : ''}`}
+                     onClick={() => { setPickedCell(i); setZoom(2); }}>
+                  <div className="num">{String(i+1).padStart(2,'0')}</div>
+                  <CellSVG fillPct={fill} warn={i === outlierIdx} />
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* single cell zoom */}
@@ -420,8 +495,10 @@ function App() {
       {/* hint at the bottom */}
       <div className={`hint ${zoom !== 0 ? 'hide' : ''}`}>
         <span>drag to look back</span>
-        <span className="pip" />
-        <span>scroll in to see the cells</span>
+        {!isCan && <>
+          <span className="pip" />
+          <span>scroll in to see the cells</span>
+        </>}
       </div>
     </div>
   );

@@ -321,3 +321,34 @@ body {
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
+
+/* ── Source toggle pill (top-right) ─────────────────────────────────── */
+.src-pill {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 50;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  background: oklch(1 0 0 / 0.55);
+  color: var(--ink-2);
+  border: 0.5px solid var(--hair);
+  border-radius: 999px;
+  cursor: pointer;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  transition: background 180ms ease, color 180ms ease;
+}
+.src-pill:hover { background: oklch(1 0 0 / 0.85); color: var(--ink); }
+
+/* ── CAN no-cells notice ────────────────────────────────────────────── */
+.cells-empty {
+  font-family: var(--text);
+  font-size: clamp(13px, 1.1vw, 16px);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  text-align: center;
+}

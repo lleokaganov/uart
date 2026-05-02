@@ -23,6 +23,20 @@ const KIND_LABEL = {
   'aux':          'aux',
   'meta':         'meta',
   'unknown':      '—',
+  // CAN
+  'can-sync':              'CAN · sync',
+  'can-bms-tpdo1':         'CAN · BMS TPDO1',
+  'can-bms-tpdo2':         'CAN · BMS TPDO2',
+  'can-bms-tpdo3':         'CAN · BMS TPDO3',
+  'can-station-rx':        'CAN · station rx',
+  'can-station-rx-info':   'CAN · station info',
+  'can-station-rx-flags':  'CAN · station flags',
+  'can-station-tx':        'CAN · station tx',
+  'can-station-tx-info':   'CAN · station out',
+  'can-station-tx-vctl':   'CAN · vctl',
+  'can-station-id':        'CAN · ID string',
+  'can-heartbeat':         'CAN · heartbeat',
+  'can-unknown':           'CAN · unknown',
 };
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -164,17 +178,22 @@ function Spark({ data, width = 280, height = 56, accent }) {
 // ────────────────────────────────────────────────────────────────────────────
 function FrameRow({ frame, onPick, picked }) {
   const sumCls = frame.sumOk ? 'ok' : 'bad';
+  const isCan = frame.kind === 'can';
   const ans = frame.isAnswer ? 'tx' : 'rx';
   const k = frame.interp.kind;
   return (
     <button className={`frow ${picked ? 'frow-picked' : ''}`} onClick={() => onPick(frame)}>
       <span className="fr-time">{frame.tsLabel}</span>
-      <span className={`fr-dir fr-${ans}`}>{ans === 'tx' ? '↩' : '→'}</span>
+      <span className={`fr-dir fr-${ans}`}>{isCan ? '·' : (ans === 'tx' ? '↩' : '→')}</span>
       <span className="fr-addr">{frame.addrHex}</span>
-      <span className={`fr-code fr-code-${ans}`}>·{frame.codeHex}</span>
-      <span className={`fr-kind k-${k}`}>{KIND_LABEL[k]}</span>
+      {isCan
+        ? <span className="fr-code fr-code-rx">·can</span>
+        : <span className={`fr-code fr-code-${ans}`}>·{frame.codeHex}</span>}
+      <span className={`fr-kind k-${k}`}>{KIND_LABEL[k] || k}</span>
       <span className="fr-len">{String(frame.len).padStart(2, '0')}B</span>
-      <span className={`fr-sum sum-${sumCls}`}>{frame.sumOk ? 'OK' : 'BAD'}</span>
+      {isCan
+        ? <span className="fr-sum">·</span>
+        : <span className={`fr-sum sum-${sumCls}`}>{frame.sumOk ? 'OK' : 'BAD'}</span>}
       <span className="fr-summary">{frame.interp.summary}</span>
     </button>
   );
@@ -182,9 +201,9 @@ function FrameRow({ frame, onPick, picked }) {
 
 // Paired exchange — request frame on top, reply frame underneath, with the
 // shared address rendered once on the left and a latency tag on the right.
-function PairRow({ pair, onPick, pickedStart }) {
+function PairRow({ pair, onPick, pickedStart, devices }) {
   const { request, reply, addrHex, latencyMs } = pair;
-  const dev = UARTParser.DEVICES[addrHex]?.name || 'unknown';
+  const dev = (devices || UARTParser.DEVICES)[addrHex]?.name || 'unknown';
   return (
     <div className={`pair pair-${request.interp.kind}`}>
       <div className="pair-spine">
@@ -278,19 +297,31 @@ function FlagTable({ set }) {
   );
 }
 
-function FrameInspector({ frame }) {
-  const ann = useMemo(() => UARTParser.annotateBytes(frame, frame.interp), [frame]);
+function FrameInspector({ frame, devices }) {
+  const ann = useMemo(() => UARTParser.annotate(frame, frame.interp), [frame]);
+  const isCan = frame.kind === 'can';
+  const devTable = devices || UARTParser.DEVICES;
   return (
     <div className="inspect">
       <div className="inspect-grid">
-        <div><label>address</label><span>0x{frame.addrHex} <em>{UARTParser.DEVICES[frame.addrHex]?.name || 'unknown'}</em></span></div>
-        <div><label>control</label><span>0x{hex2(frame.control)} <em>{frame.isAnswer ? 'reply' : 'request'}</em></span></div>
-        <div><label>code</label><span>0x{frame.codeBare}</span></div>
-        <div><label>length</label><span>{frame.len} bytes</span></div>
-        <div><label>checksum</label><span className={frame.sumOk ? 'ok' : 'bad'}>{frame.sumOk ? `valid · 0x${frame.sumExpected}` : `INVALID exp 0x${frame.sumExpected}`}</span></div>
-        <div><label>terminator</label><span>{frame.terminator ? '0x16 ✓' : 'missing'}</span></div>
-        <div><label>preamble</label><span>{frame.prefixLen} × 0xFE</span></div>
-        <div><label>kind</label><span>{KIND_LABEL[frame.interp.kind]}</span></div>
+        {isCan ? (
+          <>
+            <div><label>can id</label><span>0x{frame.addrHex} <em>{devTable[frame.addrHex]?.name || 'unknown'}</em></span></div>
+            <div><label>dlc</label><span>{frame.len} byte{frame.len === 1 ? '' : 's'}</span></div>
+            <div><label>kind</label><span>{KIND_LABEL[frame.interp.kind] || frame.interp.kind}</span></div>
+          </>
+        ) : (
+          <>
+            <div><label>address</label><span>0x{frame.addrHex} <em>{devTable[frame.addrHex]?.name || 'unknown'}</em></span></div>
+            <div><label>control</label><span>0x{hex2(frame.control)} <em>{frame.isAnswer ? 'reply' : 'request'}</em></span></div>
+            <div><label>code</label><span>0x{frame.codeBare}</span></div>
+            <div><label>length</label><span>{frame.len} bytes</span></div>
+            <div><label>checksum</label><span className={frame.sumOk ? 'ok' : 'bad'}>{frame.sumOk ? `valid · 0x${frame.sumExpected}` : `INVALID exp 0x${frame.sumExpected}`}</span></div>
+            <div><label>terminator</label><span>{frame.terminator ? '0x16 ✓' : 'missing'}</span></div>
+            <div><label>preamble</label><span>{frame.prefixLen} × 0xFE</span></div>
+            <div><label>kind</label><span>{KIND_LABEL[frame.interp.kind]}</span></div>
+          </>
+        )}
       </div>
 
       {frame.interp.fields?.length > 0 && (
@@ -332,7 +363,9 @@ function FrameInspector({ frame }) {
       )}
 
       <div className="inspect-section">
-        <div className="inspect-h">payload bytes <em>(byte − 0x33 from wire)</em></div>
+        <div className="inspect-h">
+          payload bytes <em>{isCan ? '(raw CAN data)' : '(byte − 0x33 from wire)'}</em>
+        </div>
         <div className="ba-grid">
           {Array.from(frame.data).map((b, i) => (
             <ByteAnnotated key={i} ann={ann[i] || { role: 'data', label: '·' }} value={hex2(b)} idx={i} />
@@ -356,7 +389,9 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "autoPlay": true,
   "showRaw": true,
   "compactDensity": false,
-  "accent": "amber"
+  "accent": "amber",
+  "sourceMode": "rs485",
+  "sourceFile": "data/sample.txt"
 }/*EDITMODE-END*/;
 
 const ACCENTS = {
@@ -376,25 +411,45 @@ function App() {
     document.documentElement.dataset.density = tweaks.compactDensity ? 'compact' : 'normal';
   }, [accent, tweaks.compactDensity]);
 
+  // ── source pipeline
+  const SOURCE = (UARTParser.SOURCES && UARTParser.SOURCES[tweaks.sourceMode]) || UARTParser.SOURCES.rs485;
+  const isCan = SOURCE.id === 'can';
+
+  // If the persisted file isn't valid for the current source, snap back to the
+  // source's defaultFile. Done as an effect so we mutate tweak state, not render.
+  useEffect(() => {
+    const ok = SOURCE.files.some((f) => f.value === tweaks.sourceFile);
+    if (!ok) setTweak('sourceFile', SOURCE.defaultFile);
+  }, [tweaks.sourceMode, tweaks.sourceFile, SOURCE]);
+
   // ── data load
-  const [parsed, setParsed] = useState({ bytes: new Uint8Array(0), lineRanges: [] });
+  const [parsed, setParsed] = useState({ bytes: new Uint8Array(0), lineRanges: [], frames: [] });
   const [loadErr, setLoadErr] = useState(null);
   useEffect(() => {
-    fetch('data/sample.txt')
+    setLoadErr(null);
+    fetch(tweaks.sourceFile)
       .then((r) => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then((txt) => setParsed(UARTParser.parseSampleText(txt)))
+      .then((txt) => setParsed(SOURCE.parse(txt)))
       .catch((e) => setLoadErr(String(e)));
-  }, []);
+  }, [tweaks.sourceFile, tweaks.sourceMode]);
 
   // ── playback state
   const [eventIdx, setEventIdx] = useState(0); // index into lineRanges
   const [playing, setPlaying] = useState(tweaks.autoPlay);
-  const totalEvents = parsed.lineRanges.length;
+  const totalEvents = parsed.lineRanges?.length || 0;
+
+  // Reset playback index whenever the source or file changes.
+  useEffect(() => {
+    setEventIdx(0);
+  }, [tweaks.sourceMode, tweaks.sourceFile]);
+
+  // For CAN, cursor is just the line index; for RS485, the byte position.
   const cursor = useMemo(() => {
     if (!totalEvents) return 0;
     const i = Math.min(eventIdx, totalEvents - 1);
+    if (isCan) return i + 1;
     return parsed.lineRanges[i][1];
-  }, [eventIdx, parsed, totalEvents]);
+  }, [eventIdx, parsed, totalEvents, isCan]);
 
   // step rate driven by tweaks.playbackRate (events per sec)
   useEffect(() => {
@@ -410,36 +465,54 @@ function App() {
   }, [playing, totalEvents, tweaks.playbackRate]);
 
   // ── frames decoded so far
-  const buffer = parsed.bytes;
+  const buffer = parsed.bytes || new Uint8Array(0);
   const frames = useMemo(() => {
-    if (!buffer.length || !totalEvents) return [];
-    const out = [];
-    const upTo = cursor;
-    let i = 0;
-    let nFrame = 0;
+    if (!totalEvents) return [];
     const baseTs = Date.now() - totalEvents * 50;
-    while (i < upTo) {
-      const f = UARTParser.findFrame(buffer, i);
-      if (!f) break;
-      if (f.end > upTo) break;
-      f.interp = UARTParser.interpret(f);
-      f.ts = baseTs + nFrame * 47;
-      f.tsLabel = fmtTime(f.ts);
-      out.push(f);
-      i = f.end;
-      nFrame++;
+    let out;
+    if (isCan) {
+      const all = parsed.frames || [];
+      out = all.slice(0, Math.min(eventIdx + 1, all.length));
+      out.forEach((f, idx) => {
+        if (!f.interp) f.interp = UARTParser.interpretCan(f);
+        f.ts = baseTs + idx * 47;
+        f.tsLabel = fmtTime(f.ts);
+      });
+    } else {
+      out = [];
+      const upTo = cursor;
+      let i = 0;
+      let nFrame = 0;
+      while (i < upTo) {
+        const f = UARTParser.findFrame(buffer, i);
+        if (!f) break;
+        if (f.end > upTo) break;
+        f.interp = UARTParser.interpret(f);
+        f.kind = f.kind || 'rs485';
+        f.ts = baseTs + nFrame * 47;
+        f.tsLabel = fmtTime(f.ts);
+        out.push(f);
+        i = f.end;
+        nFrame++;
+      }
     }
     return out;
-  }, [buffer, cursor, totalEvents]);
+  }, [buffer, cursor, totalEvents, isCan, parsed, eventIdx]);
 
   // ── derived state for the dashboards
   const latest = useMemo(() => {
     let summary = null, cells = null, info = null;
     for (let i = frames.length - 1; i >= 0; i--) {
       const f = frames[i];
-      if (!summary && f.interp.kind === 'bms-summary') summary = f;
-      if (!cells   && f.interp.kind === 'bms-cells')   cells = f;
-      if (!info    && f.interp.kind === 'bms-info')    info = f;
+      const k = f.interp.kind;
+      if (!summary && (k === 'bms-summary' || k === 'can-bms-tpdo1')) summary = f;
+      if (!cells   && (k === 'bms-cells'   || k === 'can-bms-tpdo1')) cells = f;
+      if (!info    && (k === 'bms-info'    || k === 'can-station-id')) {
+        // for CAN, only count ID frames whose ASCII is non-empty
+        if (k === 'can-station-id') {
+          if (f.interp.model) info = f;
+        } else info = f;
+      }
       if (summary && cells && info) break;
     }
     // bms-cells frames carry the summary block too — use them as a fallback.
@@ -450,7 +523,8 @@ function App() {
   const history = useMemo(() => {
     const v = [], a = [], s = [];
     frames.forEach((f) => {
-      if (f.interp.kind === 'bms-summary' || f.interp.kind === 'bms-cells') {
+      const k = f.interp.kind;
+      if (k === 'bms-summary' || k === 'bms-cells' || k === 'can-bms-tpdo1') {
         if (typeof f.interp.voltage === 'number') v.push(f.interp.voltage);
         if (typeof f.interp.current === 'number') a.push(f.interp.current);
         if (typeof f.interp.soc === 'number')     s.push(f.interp.soc);
@@ -467,12 +541,14 @@ function App() {
   const stats = useMemo(() => {
     const byDev = {};
     let bad = 0;
+    let unknown = 0;
     frames.forEach((f) => {
       const k = f.addrHex;
       byDev[k] = (byDev[k] || 0) + 1;
       if (!f.sumOk) bad++;
+      if (f.interp && f.interp.kind === 'can-unknown') unknown++;
     });
-    return { total: frames.length, byDev, bad };
+    return { total: frames.length, byDev, bad, unknown };
   }, [frames]);
 
   // ── multi-select device filter (persisted as comma-joined string)
@@ -492,14 +568,13 @@ function App() {
 
   // Group request+reply pairs into a single exchange entry. Solo frames
   // (orphan replies, unmatched requests) become standalone rows.
-  const events = useMemo(() => UARTParser.pairExchanges(filtered), [filtered]);
+  const events = useMemo(() => SOURCE.pair(filtered), [filtered, SOURCE]);
 
   // ── selection
   const [picked, setPicked] = useState(null);
   useEffect(() => {
-    if (!picked) return;
-    // when frames advance, keep latest pick "live" if it's the most recent
-  }, [picked, frames]);
+    setPicked(null);
+  }, [tweaks.sourceMode, tweaks.sourceFile]);
 
   // auto-scroll log
   const logRef = useRef(null);
@@ -531,7 +606,7 @@ function App() {
           <div className="brand-mark"></div>
           <div className="brand-stack">
             <div className="brand-name">UART · CAN inspector</div>
-            <div className="brand-sub">battery + station bus monitor</div>
+            <div className="brand-sub">{isCan ? 'CAN PDO · 11-bit IDs' : 'battery + station bus monitor'}</div>
           </div>
         </div>
 
@@ -541,10 +616,20 @@ function App() {
             <span>{status}</span>
           </div>
           <div className="status-meta">
-            <div><label>port</label><span>/dev/ttyUSB0</span></div>
-            <div><label>baud</label><span>9600 8N1</span></div>
-            <div><label>frames</label><span>{stats.total}</span></div>
-            <div><label>chk fail</label><span className={stats.bad ? 'warn' : ''}>{stats.bad}</span></div>
+            {isCan ? (
+              <>
+                <div><label>mode</label><span>CAN PDO</span></div>
+                <div><label>frames</label><span>{stats.total}</span></div>
+                <div><label>unknown</label><span className={stats.unknown ? 'warn' : ''}>{stats.unknown}</span></div>
+              </>
+            ) : (
+              <>
+                <div><label>port</label><span>/dev/ttyUSB0</span></div>
+                <div><label>baud</label><span>9600 8N1</span></div>
+                <div><label>frames</label><span>{stats.total}</span></div>
+                <div><label>chk fail</label><span className={stats.bad ? 'warn' : ''}>{stats.bad}</span></div>
+              </>
+            )}
           </div>
         </div>
 
@@ -565,13 +650,13 @@ function App() {
         <div className="scrub-meta">
           <span>{eventIdx} / {totalEvents}</span>
           <span>·</span>
-          <span>{cursor.toLocaleString()} bytes</span>
+          <span>{cursor.toLocaleString()} {isCan ? 'frames' : 'bytes'}</span>
           <span>·</span>
           <span>{tweaks.playbackRate}× rate</span>
         </div>
       </div>
 
-      {loadErr && <div className="banner err">data/sample.txt failed to load: {loadErr}</div>}
+      {loadErr && <div className="banner err">{tweaks.sourceFile} failed to load: {loadErr}</div>}
 
       <main className="grid">
         {/* ── BMS card ── */}
@@ -610,7 +695,9 @@ function App() {
             <div className="cells-h">
               <span>cell voltages · 20-string</span>
               <span className="cells-stats">
-                {latest.cells ? (
+                {isCan ? (
+                  <em>no cell-level data on CAN</em>
+                ) : latest.cells ? (
                   <>
                     <em>min</em>{Math.min(...latest.cells.interp.cells.filter(v=>v>0))}
                     &nbsp;<em>max</em>{Math.max(...latest.cells.interp.cells)}
@@ -627,7 +714,7 @@ function App() {
         <section className="card card-bus">
           <header className="card-h"><span className="card-title">bus map</span><span className="card-sub">device addresses on the line</span></header>
           <div className="bus-list">
-            {Object.entries(UARTParser.DEVICES).map(([addr, dev]) => {
+            {Object.entries(SOURCE.devices).map(([addr, dev]) => {
               const n = stats.byDev[addr] || 0;
               const seen = n > 0;
               const on = activeDevices.has(addr);
@@ -663,7 +750,7 @@ function App() {
         </section>
 
         {/* ── Raw bytes stream ── */}
-        {tweaks.showRaw && (
+        {tweaks.showRaw && SOURCE.hasByteStream && (
           <section className="card card-bytes">
             <header className="card-h">
               <span className="card-title">raw bytes</span>
@@ -687,7 +774,8 @@ function App() {
               ev.kind === 'pair'
                 ? <PairRow key={'p'+ev.request.start} pair={ev}
                            onPick={setPicked}
-                           pickedStart={picked?.start} />
+                           pickedStart={picked?.start}
+                           devices={SOURCE.devices} />
                 : <FrameRow key={'f'+ev.frame.start+':'+i} frame={ev.frame}
                             picked={picked && picked.start === ev.frame.start}
                             onPick={setPicked} />
@@ -702,7 +790,7 @@ function App() {
             <span className="card-sub">{picked ? `0x${picked.addrHex} · ctl=0x${hex2(picked.control)} · ${KIND_LABEL[picked.interp.kind]}` : 'select a frame'}</span>
           </header>
           {picked ? (
-            <FrameInspector frame={picked} />
+            <FrameInspector frame={picked} devices={SOURCE.devices} />
           ) : (
             <div className="inspect-empty">click any row in the frame log to inspect →</div>
           )}
@@ -710,19 +798,34 @@ function App() {
       </main>
 
       <TweaksPanel title="Tweaks" initialPos={{ right: 24, bottom: 24 }}>
-        <TweakSection title="playback">
+        <TweakSection label="source">
+          <TweakRadio label="protocol" value={tweaks.sourceMode}
+            options={[
+              { value: 'rs485', label: 'RS485' },
+              { value: 'can',   label: 'CAN PDO' },
+            ]}
+            onChange={(v) => {
+              setTweak('sourceMode', v);
+              const next = UARTParser.SOURCES[v] || UARTParser.SOURCES.rs485;
+              setTweak('sourceFile', next.defaultFile);
+            }} />
+          <TweakSelect label="capture" value={tweaks.sourceFile}
+            options={SOURCE.files}
+            onChange={(v) => setTweak('sourceFile', v)} />
+        </TweakSection>
+        <TweakSection label="playback">
           <TweakSlider label="rate (events/s)" value={tweaks.playbackRate} min={1} max={120} step={1}
             onChange={(v) => setTweak('playbackRate', v)} />
           <TweakToggle label="auto-play on load" value={tweaks.autoPlay}
             onChange={(v) => setTweak('autoPlay', v)} />
         </TweakSection>
-        <TweakSection title="layout">
+        <TweakSection label="layout">
           <TweakToggle label="show raw bytes panel" value={tweaks.showRaw}
             onChange={(v) => setTweak('showRaw', v)} />
           <TweakToggle label="compact density" value={tweaks.compactDensity}
             onChange={(v) => setTweak('compactDensity', v)} />
         </TweakSection>
-        <TweakSection title="theme">
+        <TweakSection label="theme">
           <TweakRadio label="accent" value={tweaks.accent}
             options={[
               { value: 'amber', label: 'amber' },
