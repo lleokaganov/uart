@@ -131,6 +131,18 @@ body {
 .live-btn-disconnect { background: var(--warn); color: #fff; border-color: var(--warn); }
 .live-btn-cog, .live-btn-clear { padding: 5px 10px; }
 
+.signal-lines { display: inline-flex; gap: 4px; margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--line); }
+.sig-btn {
+  appearance: none; background: var(--bg-2); border: 1px solid var(--line);
+  color: var(--fg-3); font-family: var(--mono); font-size: 11px;
+  padding: 5px 10px; cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.06em; min-width: 36px;
+}
+.sig-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.sig-btn:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-3); }
+.sig-btn.on { background: var(--ok); color: #fff; border-color: var(--ok); }
+.sig-btn.sig-pulse.on { background: var(--warn); border-color: var(--warn); animation: pulse 1.2s infinite; }
+
 .serial-popover {
   position: absolute; top: calc(100% + 8px); right: 22px;
   background: var(--bg); border: 1px solid var(--line);
@@ -259,6 +271,19 @@ body {
   text-transform: uppercase; letter-spacing: 0.08em; margin-left: auto;
 }
 .send-hint.err { color: var(--warn); text-transform: none; letter-spacing: 0; }
+.send-shift {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--mono); font-size: 11px; color: var(--fg-2);
+  text-transform: uppercase; letter-spacing: 0.08em; cursor: pointer;
+  padding: 4px 8px; border: 1px solid transparent;
+}
+.send-shift:hover { color: var(--fg); border-color: var(--line); }
+.send-shift input { appearance: none; -webkit-appearance: none;
+  width: 12px; height: 12px; border: 1px solid var(--fg-3);
+  background: var(--bg-2); cursor: pointer; position: relative;
+}
+.send-shift input:checked { background: var(--accent); border-color: var(--accent); }
+.send-shift input:checked::after { content: '✓'; position: absolute; top: -3px; left: 1px; color: #fff; font-size: 10px; line-height: 1; }
 .send-history { margin-top: 12px; display: flex; flex-direction: column; gap: 3px; }
 .send-history-h {
   font-family: var(--mono); font-size: 10px; color: var(--fg-3);

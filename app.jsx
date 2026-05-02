@@ -747,7 +747,29 @@ function App() {
   const [sendDraft, setSendDraft] = useState('');
   const [sendHistory, setSendHistory] = useState([]);
   const [sendErr, setSendErr] = useState(null);
-  const sendBytes = useMemo(() => parseSendInput(sendDraft), [sendDraft]);
+  const [shift033, setShift033] = useState(false); // +0x33 shift on the data half of a BMS frame
+  const rawSendBytes = useMemo(() => parseSendInput(sendDraft), [sendDraft]);
+  // When +0x33 is on we shift only the *data* bytes of a BMS frame:
+  // frame layout = [optional FE…] 68 ADDR_LO ADDR_HI 68 CTRL LEN DATA(len) CHK [16].
+  // We locate the second 0x68 and shift bytes [+2 .. +2+len-1] before computing CHK.
+  // This matches what UART.do() did in the original code.
+  const sendBytes = useMemo(() => {
+    if (!rawSendBytes || !shift033) return rawSendBytes;
+    const bs = Array.from(rawSendBytes);
+    let i = 0;
+    while (i < bs.length && bs[i] === 0xFE) i++;
+    if (bs[i] !== 0x68 || bs[i + 3] !== 0x68) return rawSendBytes; // not a BMS frame, leave alone
+    const len = bs[i + 5];
+    const dataStart = i + 6;
+    const dataEnd = dataStart + len;
+    if (dataEnd > bs.length) return rawSendBytes;
+    for (let k = dataStart; k < dataEnd; k++) bs[k] = (bs[k] + 0x33) & 0xFF;
+    // recompute checksum across [first 0x68 .. last data byte]
+    let s = 0;
+    for (let k = i; k < dataEnd; k++) s = (s + bs[k]) & 0xFF;
+    if (dataEnd < bs.length) bs[dataEnd] = s;
+    return Uint8Array.from(bs);
+  }, [rawSendBytes, shift033]);
   const sendCanGo = isLive && liveSnap.status === 'connected' && !!sendBytes && sendBytes.length > 0;
   const doSend = useCallback(async () => {
     if (!sendCanGo) return;
@@ -762,6 +784,45 @@ function App() {
       setSendErr(String(e && e.message || e));
     }
   }, [sendCanGo, sendBytes]);
+
+  // ── signal lines (DTR / RTS) and the original RTS/DTR pulse test
+  const [dtr, setDtr] = useState(false);
+  const [rts, setRts] = useState(false);
+  const [pulsing, setPulsing] = useState(false);
+  const pulseRef = useRef(null);
+  const setSignal = useCallback(async (which, on) => {
+    if (which === 'dtr') setDtr(on);
+    else setRts(on);
+    if (liveSnap.status !== 'connected') return;
+    try {
+      await LIVE.setSignals({
+        dataTerminalReady: which === 'dtr' ? on : dtr,
+        requestToSend:     which === 'rts' ? on : rts,
+      });
+    } catch (e) { console.warn('setSignals', e); }
+  }, [liveSnap.status, dtr, rts]);
+  const togglePulse = useCallback(() => {
+    if (pulseRef.current) {
+      clearInterval(pulseRef.current); pulseRef.current = null; setPulsing(false);
+      LIVE.setSignals({ dataTerminalReady: dtr, requestToSend: rts }).catch(() => {});
+      return;
+    }
+    if (liveSnap.status !== 'connected') return;
+    setPulsing(true);
+    pulseRef.current = setInterval(async () => {
+      try {
+        await LIVE.setSignals({ dataTerminalReady: true, requestToSend: true });
+        await new Promise((r) => setTimeout(r, 100));
+        await LIVE.setSignals({ dataTerminalReady: false, requestToSend: false });
+      } catch (e) { console.warn(e); }
+    }, 200);
+  }, [liveSnap.status, dtr, rts]);
+  // stop pulsing on disconnect
+  useEffect(() => {
+    if (liveSnap.status !== 'connected' && pulseRef.current) {
+      clearInterval(pulseRef.current); pulseRef.current = null; setPulsing(false);
+    }
+  }, [liveSnap.status]);
   const liveSupported = UARTParser.LiveSerial.isSupported();
   const liveBaud = serialOpts.baudRate;
   const liveStr = `${liveBaud} ${serialOpts.dataBits}${serialOpts.parity[0].toUpperCase()}${serialOpts.stopBits}`;
@@ -842,6 +903,29 @@ function App() {
                       onClick={() => LIVE.clear()}>
                 ⌫ clear
               </button>
+              <div className="signal-lines" aria-label="modem control lines">
+                <button
+                  className={`sig-btn ${dtr ? 'on' : ''}`}
+                  disabled={liveSnap.status !== 'connected'}
+                  onClick={() => setSignal('dtr', !dtr)}
+                  title="toggle DTR (Data Terminal Ready)">
+                  DTR
+                </button>
+                <button
+                  className={`sig-btn ${rts ? 'on' : ''}`}
+                  disabled={liveSnap.status !== 'connected'}
+                  onClick={() => setSignal('rts', !rts)}
+                  title="toggle RTS (Request To Send)">
+                  RTS
+                </button>
+                <button
+                  className={`sig-btn sig-pulse ${pulsing ? 'on' : ''}`}
+                  disabled={liveSnap.status !== 'connected'}
+                  onClick={togglePulse}
+                  title="pulse DTR+RTS at 5 Hz (matches the original test_rts_dtr)">
+                  {pulsing ? '◼ pulsing' : '⚡ pulse'}
+                </button>
+              </div>
             </div>
           )}
           <div className={`status-pill status-${statusDot}`}>
@@ -1023,8 +1107,12 @@ function App() {
               <button className="send-btn-2" disabled={!sendDraft} onClick={() => { setSendDraft(''); setSendErr(null); }}>
                 clear
               </button>
+              <label className="send-shift" title="shift the data half of a BMS frame by +0x33 and recompute the checksum before sending">
+                <input type="checkbox" checked={shift033} onChange={(e) => setShift033(e.target.checked)} />
+                <span>+0x33 shift</span>
+              </label>
               <span className={`send-hint ${sendErr ? 'err' : ''}`}>
-                {sendErr ? sendErr : (sendDraft && !sendBytes ? 'unparseable — check tokens 0..255' : '⌘↵ to send')}
+                {sendErr ? sendErr : (sendDraft && !rawSendBytes ? 'unparseable — check tokens 0..255' : '⌘↵ to send')}
               </span>
             </div>
             {sendHistory.length > 0 && (
