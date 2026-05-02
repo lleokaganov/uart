@@ -1136,6 +1136,177 @@
     },
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Live Web Serial transport.
+  //
+  // Owns a single port at a time. Maintains an accumulating Uint8Array of
+  // received bytes plus a parallel array of "chunk" boundaries (lineRanges-
+  // shaped) so the existing playback/scrubbing code Just Works on live data.
+  // Subscribers (the React app) re-read the buffer via getSnapshot() and are
+  // notified through onChange. Throttled to ~20 Hz so a busy bus doesn't
+  // re-render React on every byte.
+  //
+  // API:
+  //   const live = LiveSerial.create();
+  //   live.subscribe(() => { const s = live.getSnapshot(); ... });
+  //   await live.connect({ baudRate: 9600, dataBits: 8, parity: 'none', stopBits: 1, flowControl: 'none' });
+  //   await live.send(uint8Array);
+  //   await live.setSignals({ dataTerminalReady, requestToSend });
+  //   await live.disconnect();
+  //   live.clear();   // wipe buffer without disconnecting
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const SERIAL_DEFAULTS = {
+    baudRate: 9600,
+    dataBits: 8,
+    parity: 'none',
+    stopBits: 1,
+    flowControl: 'none',
+  };
+
+  function makeLiveSerial() {
+    let port = null;
+    let reader = null;
+    let writer = null;
+    let buffer = new Uint8Array(0);
+    let lineRanges = [];
+    let status = 'disconnected'; // 'disconnected' | 'connecting' | 'connected' | 'error'
+    let errorMsg = null;
+    let opts = { ...SERIAL_DEFAULTS };
+    let lastChunkAt = 0;
+    const subs = new Set();
+    let snapVersion = 0;
+    let snapshot = { status, errorMsg, opts: { ...opts }, buffer, lineRanges, version: 0 };
+    let throttleTimer = null;
+    let needsFlush = false;
+
+    function notify() {
+      snapVersion++;
+      snapshot = {
+        status, errorMsg,
+        opts: { ...opts },
+        buffer, lineRanges,
+        version: snapVersion,
+      };
+      subs.forEach((fn) => { try { fn(snapshot); } catch (e) { console.error(e); } });
+    }
+    function flushSoon() {
+      if (throttleTimer) { needsFlush = true; return; }
+      throttleTimer = setTimeout(() => {
+        throttleTimer = null;
+        if (needsFlush) { needsFlush = false; flushSoon(); }
+        notify();
+      }, 50); // 20 Hz
+      notify();
+    }
+
+    function appendChunk(chunk) {
+      if (!chunk || !chunk.length) return;
+      const next = new Uint8Array(buffer.length + chunk.length);
+      next.set(buffer);
+      next.set(chunk, buffer.length);
+      const start = buffer.length;
+      buffer = next;
+      lineRanges = lineRanges.concat([[start, buffer.length]]);
+      lastChunkAt = Date.now();
+      flushSoon();
+    }
+
+    async function connect(nextOpts) {
+      if (status === 'connecting' || status === 'connected') return;
+      if (!navigator?.serial) {
+        status = 'error';
+        errorMsg = 'Web Serial API not available — use Chrome / Edge desktop over HTTPS or localhost.';
+        notify();
+        throw new Error(errorMsg);
+      }
+      opts = { ...SERIAL_DEFAULTS, ...opts, ...(nextOpts || {}) };
+      status = 'connecting'; errorMsg = null;
+      notify();
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open(opts);
+        status = 'connected';
+        notify();
+        reader = port.readable.getReader();
+        // detached read loop
+        (async () => {
+          try {
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              if (value && value.length) appendChunk(value);
+            }
+          } catch (e) {
+            errorMsg = String(e && e.message || e);
+          } finally {
+            try { reader.releaseLock(); } catch {}
+            reader = null;
+            if (status === 'connected') {
+              status = 'disconnected';
+              notify();
+            }
+          }
+        })();
+      } catch (e) {
+        status = 'error';
+        errorMsg = String(e && e.message || e);
+        try { if (port) await port.close(); } catch {}
+        port = null;
+        notify();
+        throw e;
+      }
+    }
+
+    async function disconnect() {
+      try { if (reader) await reader.cancel(); } catch {}
+      try { if (writer) writer.releaseLock(); } catch {}
+      writer = null;
+      try { if (port) await port.close(); } catch {}
+      port = null;
+      status = 'disconnected'; errorMsg = null;
+      notify();
+    }
+
+    async function send(bytes) {
+      if (!port?.writable) throw new Error('port not writable');
+      const w = port.writable.getWriter();
+      try { await w.write(bytes); }
+      finally { w.releaseLock(); }
+    }
+
+    async function setSignals(sig) {
+      if (!port) return;
+      try { await port.setSignals(sig); } catch (e) { console.warn('setSignals', e); }
+    }
+
+    function setOpts(next) {
+      opts = { ...opts, ...next };
+      notify();
+    }
+
+    function clear() {
+      buffer = new Uint8Array(0);
+      lineRanges = [];
+      notify();
+    }
+
+    function subscribe(fn) {
+      subs.add(fn);
+      fn(snapshot);
+      return () => subs.delete(fn);
+    }
+    function getSnapshot() { return snapshot; }
+
+    return { connect, disconnect, send, setSignals, setOpts, clear, subscribe, getSnapshot };
+  }
+
+  const LiveSerial = {
+    create: makeLiveSerial,
+    DEFAULTS: SERIAL_DEFAULTS,
+    isSupported: () => typeof navigator !== 'undefined' && !!navigator.serial,
+  };
+
   // Convenience: for an event index, what cursor unit does the source use?
   // RS485 → byte position; CAN → line index.
   function cursorOf(srcId, parsed, upToLineIdx) {
@@ -1167,5 +1338,6 @@
     FLAG_STATION_RX_ERR, FLAG_STATION_RX_STAT,
     FLAG_STATION_TX_ERR, FLAG_STATION_TX_STAT,
     SOURCES, cursorOf,
+    LiveSerial,
   };
 })(window);

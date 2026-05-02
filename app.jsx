@@ -1,5 +1,28 @@
 /* global React, ReactDOM, UARTParser, TweaksPanel, useTweaks, TweakSection, TweakSlider, TweakToggle, TweakRadio, TweakSelect, TweakButton */
-const { useEffect, useMemo, useRef, useState, useCallback } = React;
+const { useEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } = React;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Live serial — single shared instance for the page.
+// ────────────────────────────────────────────────────────────────────────────
+const LIVE = UARTParser.LiveSerial.create();
+const SERIAL_LS_KEY = 'uart-serial-opts-v1';
+function loadSerialOpts() {
+  try {
+    const v = localStorage.getItem(SERIAL_LS_KEY);
+    if (v) return { ...UARTParser.LiveSerial.DEFAULTS, ...JSON.parse(v) };
+  } catch {}
+  return { ...UARTParser.LiveSerial.DEFAULTS };
+}
+function saveSerialOpts(opts) {
+  try { localStorage.setItem(SERIAL_LS_KEY, JSON.stringify(opts)); } catch {}
+}
+function useLiveSerial() {
+  return useSyncExternalStore(
+    (cb) => LIVE.subscribe(cb),
+    () => LIVE.getSnapshot(),
+    () => LIVE.getSnapshot(),
+  );
+}
 
 // ────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -391,7 +414,8 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "compactDensity": false,
   "accent": "amber",
   "sourceMode": "rs485",
-  "sourceFile": "data/sample.txt"
+  "sourceFile": "data/sample.txt",
+  "live": false
 }/*EDITMODE-END*/;
 
 const ACCENTS = {
@@ -400,6 +424,55 @@ const ACCENTS = {
   lime:   'oklch(0.82 0.14 130)',
   rose:   'oklch(0.78 0.14 20)',
 };
+
+function SerialOptsPanel({ opts, connected, onChange, onClose }) {
+  const BAUDS = [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
+  const change = (k) => (e) => onChange({ [k]: typeof opts[k] === 'number' ? +e.target.value : e.target.value });
+  return (
+    <div className="serial-popover" role="dialog" aria-label="serial port settings">
+      <div className="serial-popover-h">
+        <span>serial settings</span>
+        <button className="serial-popover-x" onClick={onClose}>✕</button>
+      </div>
+      {connected && <div className="serial-popover-note">disconnect to change · current settings stay applied</div>}
+      <label className="serial-row">
+        <span>baud</span>
+        <select disabled={connected} value={opts.baudRate} onChange={change('baudRate')}>
+          {BAUDS.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+      </label>
+      <label className="serial-row">
+        <span>data</span>
+        <select disabled={connected} value={opts.dataBits} onChange={change('dataBits')}>
+          <option value={7}>7</option>
+          <option value={8}>8</option>
+        </select>
+      </label>
+      <label className="serial-row">
+        <span>parity</span>
+        <select disabled={connected} value={opts.parity} onChange={change('parity')}>
+          <option value="none">none</option>
+          <option value="even">even</option>
+          <option value="odd">odd</option>
+        </select>
+      </label>
+      <label className="serial-row">
+        <span>stop</span>
+        <select disabled={connected} value={opts.stopBits} onChange={change('stopBits')}>
+          <option value={1}>1</option>
+          <option value={2}>2</option>
+        </select>
+      </label>
+      <label className="serial-row">
+        <span>flow</span>
+        <select disabled={connected} value={opts.flowControl} onChange={change('flowControl')}>
+          <option value="none">none</option>
+          <option value="hardware">hardware</option>
+        </select>
+      </label>
+    </div>
+  );
+}
 
 function App() {
   const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
@@ -414,24 +487,50 @@ function App() {
   // ── source pipeline
   const SOURCE = (UARTParser.SOURCES && UARTParser.SOURCES[tweaks.sourceMode]) || UARTParser.SOURCES.rs485;
   const isCan = SOURCE.id === 'can';
+  const isLive = !!tweaks.live;
+  // Live mode is RS485-only for now (CAN-over-serial framing isn't standardized).
+  // If user flips to live while CAN is active, snap back to RS485.
+  useEffect(() => {
+    if (isLive && tweaks.sourceMode !== 'rs485') {
+      setTweak('sourceMode', 'rs485');
+    }
+  }, [isLive, tweaks.sourceMode]);
+
+  // ── live serial subscription
+  const liveSnap = useLiveSerial();
+  const [serialOpts, setSerialOptsState] = useState(loadSerialOpts);
+  const updateSerialOpts = useCallback((next) => {
+    const merged = { ...serialOpts, ...next };
+    setSerialOptsState(merged);
+    saveSerialOpts(merged);
+    LIVE.setOpts(merged);
+  }, [serialOpts]);
+  useEffect(() => { LIVE.setOpts(serialOpts); /* sync on mount */ }, []);
 
   // If the persisted file isn't valid for the current source, snap back to the
   // source's defaultFile. Done as an effect so we mutate tweak state, not render.
   useEffect(() => {
+    if (isLive) return;
     const ok = SOURCE.files.some((f) => f.value === tweaks.sourceFile);
     if (!ok) setTweak('sourceFile', SOURCE.defaultFile);
-  }, [tweaks.sourceMode, tweaks.sourceFile, SOURCE]);
+  }, [tweaks.sourceMode, tweaks.sourceFile, SOURCE, isLive]);
 
   // ── data load
-  const [parsed, setParsed] = useState({ bytes: new Uint8Array(0), lineRanges: [], frames: [] });
+  // capture mode: fetch the selected file; live mode: read the live snapshot.
+  const [fileParsed, setFileParsed] = useState({ bytes: new Uint8Array(0), lineRanges: [], frames: [] });
   const [loadErr, setLoadErr] = useState(null);
   useEffect(() => {
+    if (isLive) return; // live takes a different path
     setLoadErr(null);
     fetch(tweaks.sourceFile)
       .then((r) => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)))
-      .then((txt) => setParsed(SOURCE.parse(txt)))
+      .then((txt) => setFileParsed(SOURCE.parse(txt)))
       .catch((e) => setLoadErr(String(e)));
-  }, [tweaks.sourceFile, tweaks.sourceMode]);
+  }, [tweaks.sourceFile, tweaks.sourceMode, isLive]);
+  const parsed = useMemo(() => {
+    if (isLive) return { bytes: liveSnap.buffer, lineRanges: liveSnap.lineRanges, frames: [] };
+    return fileParsed;
+  }, [isLive, liveSnap.version, fileParsed]);
 
   // ── playback state
   const [eventIdx, setEventIdx] = useState(0); // index into lineRanges
@@ -441,7 +540,13 @@ function App() {
   // Reset playback index whenever the source or file changes.
   useEffect(() => {
     setEventIdx(0);
-  }, [tweaks.sourceMode, tweaks.sourceFile]);
+  }, [tweaks.sourceMode, tweaks.sourceFile, isLive]);
+
+  // In live mode, auto-tail: keep the cursor at the latest chunk.
+  useEffect(() => {
+    if (!isLive) return;
+    if (totalEvents > 0) setEventIdx(totalEvents - 1);
+  }, [isLive, totalEvents]);
 
   // For CAN, cursor is just the line index; for RS485, the byte position.
   const cursor = useMemo(() => {
@@ -596,8 +701,21 @@ function App() {
   }, []);
 
   // ── header live status
-  const status = playing ? 'streaming' : (eventIdx >= totalEvents - 1 && totalEvents ? 'end of capture' : 'paused');
-  const statusDot = playing ? 'live' : (status === 'paused' ? 'idle' : 'done');
+  let status, statusDot;
+  if (isLive) {
+    if (liveSnap.status === 'connected')   { status = 'connected';    statusDot = 'live'; }
+    else if (liveSnap.status === 'connecting') { status = 'opening port'; statusDot = 'idle'; }
+    else if (liveSnap.status === 'error')      { status = 'error';        statusDot = 'bad'; }
+    else                                        { status = 'disconnected'; statusDot = 'idle'; }
+  } else {
+    status = playing ? 'streaming' : (eventIdx >= totalEvents - 1 && totalEvents ? 'end of capture' : 'paused');
+    statusDot = playing ? 'live' : (status === 'paused' ? 'idle' : 'done');
+  }
+  const [serialPanelOpen, setSerialPanelOpen] = useState(false);
+  const [sendDraft, setSendDraft] = useState('');  // unused phase 1; reserved for phase 2
+  const liveSupported = UARTParser.LiveSerial.isSupported();
+  const liveBaud = serialOpts.baudRate;
+  const liveStr = `${liveBaud} ${serialOpts.dataBits}${serialOpts.parity[0].toUpperCase()}${serialOpts.stopBits}`;
 
   return (
     <div className="shell">
@@ -611,6 +729,20 @@ function App() {
         </div>
 
         <div className="status-cluster">
+          <div className="source-switch" role="tablist" aria-label="transport">
+            {[
+              { v: false, label: 'Capture' },
+              { v: true,  label: 'Live' },
+            ].map((opt) => (
+              <button key={String(opt.v)} role="tab" aria-selected={isLive === opt.v}
+                      className={`src-seg ${isLive === opt.v ? 'on' : ''}`}
+                      title={!liveSupported && opt.v ? 'Web Serial not available — use Chrome/Edge desktop' : null}
+                      disabled={!liveSupported && opt.v}
+                      onClick={() => { if (isLive !== opt.v) setTweak('live', opt.v); }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
           <div className="source-switch" role="tablist" aria-label="protocol source">
             {[
               { v: 'rs485', label: 'RS485' },
@@ -618,6 +750,8 @@ function App() {
             ].map((opt) => (
               <button key={opt.v} role="tab" aria-selected={tweaks.sourceMode === opt.v}
                       className={`src-seg ${tweaks.sourceMode === opt.v ? 'on' : ''}`}
+                      title={isLive && opt.v === 'can' ? 'Live CAN not yet supported — phase 1 RS485 only' : null}
+                      disabled={isLive && opt.v === 'can'}
                       onClick={() => {
                         if (tweaks.sourceMode === opt.v) return;
                         const next = UARTParser.SOURCES[opt.v] || UARTParser.SOURCES.rs485;
@@ -628,7 +762,7 @@ function App() {
               </button>
             ))}
           </div>
-          {SOURCE.files.length > 1 && (
+          {!isLive && SOURCE.files.length > 1 && (
             <select className="source-file" value={tweaks.sourceFile}
                     onChange={(e) => setTweak('sourceFile', e.target.value)}>
               {SOURCE.files.map((f) => (
@@ -636,26 +770,64 @@ function App() {
               ))}
             </select>
           )}
+          {isLive && (
+            <div className="live-controls">
+              {liveSnap.status === 'connected' ? (
+                <button className="live-btn live-btn-disconnect" onClick={() => LIVE.disconnect()}>
+                  ◼ disconnect
+                </button>
+              ) : (
+                <button className="live-btn live-btn-connect"
+                        disabled={!liveSupported || liveSnap.status === 'connecting'}
+                        onClick={() => LIVE.connect(serialOpts).catch(() => {})}>
+                  {liveSnap.status === 'connecting' ? '· opening' : '⏵ connect'}
+                </button>
+              )}
+              <button className="live-btn live-btn-cog"
+                      title="serial settings"
+                      onClick={() => setSerialPanelOpen((v) => !v)}>
+                ⚙
+              </button>
+              <button className="live-btn live-btn-clear"
+                      title="clear live buffer"
+                      onClick={() => LIVE.clear()}>
+                ⌫ clear
+              </button>
+            </div>
+          )}
           <div className={`status-pill status-${statusDot}`}>
             <span className="dot"></span>
             <span>{status}</span>
           </div>
           <div className="status-meta">
-            {isCan ? (
+            {isLive ? (
               <>
-                <div><label>mode</label><span>CAN PDO</span></div>
+                <div><label>port</label><span>{liveSnap.status === 'connected' ? 'open' : '—'}</span></div>
+                <div><label>baud</label><span>{liveStr}</span></div>
+                <div><label>bytes</label><span>{(liveSnap.buffer?.length || 0).toLocaleString()}</span></div>
+                <div><label>frames</label><span>{stats.total}</span></div>
+                <div><label>chk fail</label><span className={stats.bad ? 'warn' : ''}>{stats.bad}</span></div>
+              </>
+            ) : isCan ? (
+              <>
+                <div><label>mode</label><span>CAN PDO · capture</span></div>
                 <div><label>frames</label><span>{stats.total}</span></div>
                 <div><label>unknown</label><span className={stats.unknown ? 'warn' : ''}>{stats.unknown}</span></div>
               </>
             ) : (
               <>
-                <div><label>port</label><span>/dev/ttyUSB0</span></div>
-                <div><label>baud</label><span>9600 8N1</span></div>
+                <div><label>mode</label><span>RS485 · capture</span></div>
                 <div><label>frames</label><span>{stats.total}</span></div>
                 <div><label>chk fail</label><span className={stats.bad ? 'warn' : ''}>{stats.bad}</span></div>
               </>
             )}
           </div>
+          {serialPanelOpen && (
+            <SerialOptsPanel opts={serialOpts}
+                             connected={liveSnap.status === 'connected'}
+                             onChange={updateSerialOpts}
+                             onClose={() => setSerialPanelOpen(false)} />
+          )}
         </div>
 
         <div className="transport">
