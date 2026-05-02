@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UART · BMS Mini S</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --accent: oklch(0.62 0.14 50);
+    --bg:    oklch(0.985 0.003 80);
+    --bg-2:  oklch(0.97 0.003 80);
+    --bg-3:  oklch(0.94 0.004 80);
+    --line:  oklch(0.86 0.005 80);
+    --fg:    oklch(0.20 0.008 60);
+    --fg-2:  oklch(0.36 0.008 60);
+    --fg-3:  oklch(0.55 0.006 60);
+    --mono:  'IBM Plex Mono', ui-monospace, Menlo, monospace;
+    --sans:  'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  ::selection { background: var(--accent); color: #fff; }
+
+  .top {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand-mark {
+    width: 22px; height: 22px;
+    background: var(--accent);
+    position: relative;
+  }
+  .brand-mark::before, .brand-mark::after {
+    content: ''; position: absolute; left: 4px; right: 4px; height: 1px; background: #fff;
+  }
+  .brand-mark::before { top: 9px; }
+  .brand-mark::after  { top: 12px; }
+  .brand-name { font-weight: 600; letter-spacing: 0.02em; }
+  .brand-sub  { font-size: 11px; color: var(--fg-3); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em; }
+
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 48px 22px;
+    max-width: 980px;
+    width: 100%;
+    margin: 0 auto;
+  }
+  .lede {
+    font-size: 11px;
+    color: var(--fg-3);
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 10px;
+  }
+  h1 {
+    font-size: 32px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    line-height: 1.2;
+  }
+  .sub {
+    font-size: 15px;
+    color: var(--fg-2);
+    max-width: 620px;
+    margin: 0 0 36px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  a.card {
+    display: flex; flex-direction: column;
+    padding: 22px;
+    background: var(--bg-2);
+    border: 1px solid var(--line);
+    color: var(--fg);
+    text-decoration: none;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+    min-height: 220px;
+  }
+  a.card:hover {
+    border-color: var(--accent);
+    background: var(--bg);
+    transform: translateY(-1px);
+  }
+  .tag {
+    font-family: var(--mono); font-size: 10px;
+    color: var(--fg-3);
+    text-transform: uppercase; letter-spacing: 0.12em;
+    margin-bottom: 14px;
+  }
+  .card h2 {
+    margin: 0 0 8px;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+  .card p {
+    margin: 0 0 auto;
+    color: var(--fg-2);
+    font-size: 13px;
+  }
+  .arrow {
+    margin-top: 22px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .arrow::after { content: '→'; transition: transform 0.15s; }
+  a.card:hover .arrow::after { transform: translateX(3px); }
+
+  footer {
+    padding: 18px 22px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fg-3);
+    display: flex; justify-content: space-between; gap: 12px;
+    flex-wrap: wrap;
+  }
+  footer a { color: var(--fg-2); text-decoration: none; border-bottom: 1px dotted var(--fg-3); }
+  footer a:hover { color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand-mark"></div>
+  <div>
+    <div class="brand-name">UART</div>
+    <div class="brand-sub">BMS Mini S · Telemetry</div>
+  </div>
+</header>
+
+<main>
+  <div class="lede">Two views · one decoder</div>
+  <h1>BMS Mini S telemetry, served two ways.</h1>
+  <p class="sub">
+    A static, self-contained web interface for the UART/CAN protocol.
+    Frame decoding happens in <code style="font-family:var(--mono);font-size:12px;background:var(--bg-3);padding:1px 5px;border-radius:2px;">parser.js</code>; both views read from the same source of truth.
+  </p>
+
+  <div class="grid">
+    <a class="card" href="inspector.html">
+      <div class="tag">Engineer view</div>
+      <h2>Telemetry Inspector</h2>
+      <p>Live frame log with paired request/reply rows, byte-by-byte annotated inspector, flag-bit tables, cell pack visual, and sparklines for V/A/SoC.</p>
+      <span class="arrow">Open inspector</span>
+    </a>
+
+    <a class="card" href="battery.html">
+      <div class="tag">Consumer view</div>
+      <h2>Battery</h2>
+      <p>One battery, three numbers — V, A, %. Drag to scrub time; scroll or pinch to zoom from the 20-cell pack into a single cell.</p>
+      <span class="arrow">Open battery</span>
+    </a>
+  </div>
+</main>
+
+<footer>
+  <span>Static site · React 18 + Babel via CDN · no build step</span>
+  <a href="https://github.com/lleokaganov/uart">github.com/lleokaganov/uart</a>
+</footer>
+
+</body>
+</html>
