@@ -425,6 +425,38 @@ const ACCENTS = {
   rose:   'oklch(0.78 0.14 20)',
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Send-box helpers — port from the original UART.isHex / UART.toHex.
+// Accepts whitespace- or comma-separated tokens. If any token contains a
+// hex letter (A-F) it's hex; if all tokens are exactly 2 chars and digits-only
+// it's also hex (matches the original heuristic); otherwise decimal.
+// ────────────────────────────────────────────────────────────────────────────
+function isHexInput(s) {
+  const parts = s.trim().split(/[\s,]+/).filter(Boolean);
+  if (!parts.length) return false;
+  for (const p of parts) {
+    if (/[A-Fa-f]/.test(p)) return true;
+    if (p.length !== 2) return false;
+  }
+  return true;
+}
+function parseSendInput(text) {
+  const s = (text || '').trim();
+  if (!s) return null;
+  const parts = s.split(/[\s,]+/).filter(Boolean);
+  const radix = isHexInput(s) ? 16 : 10;
+  const bytes = [];
+  for (const p of parts) {
+    const v = parseInt(p, radix);
+    if (Number.isNaN(v) || v < 0 || v > 255) return null;
+    bytes.push(v);
+  }
+  return Uint8Array.from(bytes);
+}
+function hexBytesString(bytes) {
+  return Array.from(bytes).map((b) => b.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+}
+
 function SerialOptsPanel({ opts, connected, onChange, onClose }) {
   const BAUDS = [300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
   const change = (k) => (e) => onChange({ [k]: typeof opts[k] === 'number' ? +e.target.value : e.target.value });
@@ -712,7 +744,24 @@ function App() {
     statusDot = playing ? 'live' : (status === 'paused' ? 'idle' : 'done');
   }
   const [serialPanelOpen, setSerialPanelOpen] = useState(false);
-  const [sendDraft, setSendDraft] = useState('');  // unused phase 1; reserved for phase 2
+  const [sendDraft, setSendDraft] = useState('');
+  const [sendHistory, setSendHistory] = useState([]);
+  const [sendErr, setSendErr] = useState(null);
+  const sendBytes = useMemo(() => parseSendInput(sendDraft), [sendDraft]);
+  const sendCanGo = isLive && liveSnap.status === 'connected' && !!sendBytes && sendBytes.length > 0;
+  const doSend = useCallback(async () => {
+    if (!sendCanGo) return;
+    setSendErr(null);
+    try {
+      await LIVE.send(sendBytes);
+      setSendHistory((h) => [
+        { at: Date.now(), str: hexBytesString(sendBytes), n: sendBytes.length },
+        ...h,
+      ].slice(0, 20));
+    } catch (e) {
+      setSendErr(String(e && e.message || e));
+    }
+  }, [sendCanGo, sendBytes]);
   const liveSupported = UARTParser.LiveSerial.isSupported();
   const liveBaud = serialOpts.baudRate;
   const liveStr = `${liveBaud} ${serialOpts.dataBits}${serialOpts.parity[0].toUpperCase()}${serialOpts.stopBits}`;
@@ -945,6 +994,53 @@ function App() {
             <div><span className="lg lg-end"></span>terminator 16</div>
           </div>
         </section>
+
+        {/* ── Send box (live only) ── */}
+        {isLive && (
+          <section className={`card card-send ${liveSnap.status === 'connected' ? '' : 'card-send-dim'}`}>
+            <header className="card-h">
+              <span className="card-title">send</span>
+              <span className="card-sub">
+                {liveSnap.status === 'connected'
+                  ? (sendBytes
+                      ? `${sendBytes.length} byte${sendBytes.length === 1 ? '' : 's'} ready · ${isHexInput(sendDraft) ? 'hex' : 'decimal'}`
+                      : 'tx → port · paste hex or decimal bytes')
+                  : 'connect a port to enable transmit'}
+              </span>
+            </header>
+            <textarea
+              className="send-input"
+              placeholder="hex bytes — e.g. FE FE 68 CE 31 68 02 02 33 35 16   (or decimal: 254 254 104 …)"
+              spellCheck={false}
+              value={sendDraft}
+              onChange={(e) => setSendDraft(e.target.value)}
+              onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); doSend(); } }}
+            />
+            <div className="send-actions">
+              <button className="send-btn" disabled={!sendCanGo} onClick={doSend}>
+                ▶ send{sendBytes ? ` ${sendBytes.length}B` : ''}
+              </button>
+              <button className="send-btn-2" disabled={!sendDraft} onClick={() => { setSendDraft(''); setSendErr(null); }}>
+                clear
+              </button>
+              <span className={`send-hint ${sendErr ? 'err' : ''}`}>
+                {sendErr ? sendErr : (sendDraft && !sendBytes ? 'unparseable — check tokens 0..255' : '⌘↵ to send')}
+              </span>
+            </div>
+            {sendHistory.length > 0 && (
+              <div className="send-history">
+                <div className="send-history-h">recent</div>
+                {sendHistory.slice(0, 5).map((h, i) => (
+                  <button key={i} className="send-row" onClick={() => setSendDraft(h.str)} title="click to recall">
+                    <span className="send-row-time">{fmtTime(h.at)}</span>
+                    <span className="send-row-n">{h.n}B</span>
+                    <span className="send-row-bytes">{h.str}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* ── Raw bytes stream ── */}
         {tweaks.showRaw && SOURCE.hasByteStream && (

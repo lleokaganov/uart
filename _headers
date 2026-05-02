@@ -1,0 +1,16 @@
+# Cloudflare Pages cache rules.
+# All hand-written source files revalidate on every request so app.jsx and
+# parser.js never end up out-of-sync in a browser cache. Capture data files
+# stay cacheable since they don't change often.
+
+/*.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/*.jsx
+  Cache-Control: public, max-age=0, must-revalidate
+
+/*.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
