@@ -1,0 +1,99 @@
+.windiv { position:relative; }
+.winhead {
+    position: absolute;
+    top: 15px;
+    left: 30px;
+    background-color: yellow;
+    font-size: 8px;
+    border-radius: 5px;
+    color: black;
+    padding: 2px 15px 2px 15px;
+}
+
+BUTTON {
+    padding: 5px;
+    margin: 10px;
+}
+
+.tarea {
+    width: 800px;
+    height: 10px;
+    padding: 10px;
+    background: #222;
+    color: #0f0;
+}
+
+.difflog {
+    font-family: Consolas, monospace;
+    white-space: pre;
+    background-color: #989898;
+    border:3px solid green;
+}
+
+.log_d {
+    position: relative;
+    width: 800px;
+    min-height: 100px;
+    max-height: 300px;
+}
+
+.log_console {
+    max-height: 300px;
+    margin:10px 0 10px 0;
+    overflow-y: auto;
+    height: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    border: 1px solid #ccc;
+    padding: 10px;
+    box-sizing: border-box;
+    border-radius: 5px;
+    font-size: 11px;
+    margin-top: 1.5em;
+    background: #222;
+    color: #0f0;
+    font-family: monospace;
+    font-size: 14px;
+    border-radius: 6px;
+    min-height: 100px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-align: left;
+}
+
+.log_header {
+    position: absolute;
+    font-size: 12px;
+    right: 40px;
+    margin-top: -8px;
+    background: yellow;
+    z-index: 1;
+    padding: 2px 20px 2px 20px;
+    border-radius: 10px;
+    border: 2px solid black;
+    color: black;
+}
+
+.btn_del {
+    position: absolute;
+    right: -5px;
+    background: red;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    transition: 0.15s;
+    margin-top: -10px;
+}
+
+.btn_del:hover {
+    background: #550000;
+    color: #f55;
+}
+
+.btn_del:active {
+    transform: scale(0.9);
+}
