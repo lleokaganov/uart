@@ -611,6 +611,31 @@ function App() {
         </div>
 
         <div className="status-cluster">
+          <div className="source-switch" role="tablist" aria-label="protocol source">
+            {[
+              { v: 'rs485', label: 'RS485' },
+              { v: 'can',   label: 'CAN PDO' },
+            ].map((opt) => (
+              <button key={opt.v} role="tab" aria-selected={tweaks.sourceMode === opt.v}
+                      className={`src-seg ${tweaks.sourceMode === opt.v ? 'on' : ''}`}
+                      onClick={() => {
+                        if (tweaks.sourceMode === opt.v) return;
+                        const next = UARTParser.SOURCES[opt.v] || UARTParser.SOURCES.rs485;
+                        setTweak('sourceMode', opt.v);
+                        setTweak('sourceFile', next.defaultFile);
+                      }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {SOURCE.files.length > 1 && (
+            <select className="source-file" value={tweaks.sourceFile}
+                    onChange={(e) => setTweak('sourceFile', e.target.value)}>
+              {SOURCE.files.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+          )}
           <div className={`status-pill status-${statusDot}`}>
             <span className="dot"></span>
             <span>{status}</span>
@@ -798,21 +823,6 @@ function App() {
       </main>
 
       <TweaksPanel title="Tweaks" initialPos={{ right: 24, bottom: 24 }}>
-        <TweakSection label="source">
-          <TweakRadio label="protocol" value={tweaks.sourceMode}
-            options={[
-              { value: 'rs485', label: 'RS485' },
-              { value: 'can',   label: 'CAN PDO' },
-            ]}
-            onChange={(v) => {
-              setTweak('sourceMode', v);
-              const next = UARTParser.SOURCES[v] || UARTParser.SOURCES.rs485;
-              setTweak('sourceFile', next.defaultFile);
-            }} />
-          <TweakSelect label="capture" value={tweaks.sourceFile}
-            options={SOURCE.files}
-            onChange={(v) => setTweak('sourceFile', v)} />
-        </TweakSection>
         <TweakSection label="playback">
           <TweakSlider label="rate (events/s)" value={tweaks.playbackRate} min={1} max={120} step={1}
             onChange={(v) => setTweak('playbackRate', v)} />

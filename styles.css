@@ -87,6 +87,35 @@ body {
   50%      { opacity: 0.6; box-shadow: 0 0 0 4px transparent; }
 }
 
+.source-switch {
+  display: inline-flex; border: 1px solid var(--line); background: var(--bg-2);
+  font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.src-seg {
+  appearance: none; background: transparent; border: 0; color: var(--fg-3);
+  padding: 5px 12px; cursor: pointer; font: inherit; letter-spacing: inherit;
+  border-right: 1px solid var(--line);
+}
+.src-seg:last-child { border-right: 0; }
+.src-seg:hover { color: var(--fg); }
+.src-seg.on { background: var(--accent); color: #fff; }
+.source-file {
+  appearance: none; -webkit-appearance: none;
+  font-family: var(--mono); font-size: 11px;
+  padding: 5px 28px 5px 10px;
+  background: var(--bg-2) no-repeat right 8px center / 8px auto;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg-3) 50%),
+                    linear-gradient(135deg, var(--fg-3) 50%, transparent 50%);
+  background-position: right 14px top 11px, right 9px top 11px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  border: 1px solid var(--line); color: var(--fg);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  cursor: pointer; max-width: 220px;
+}
+.source-file:hover { border-color: var(--fg-3); }
+.source-file:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+
 .status-meta { display: flex; gap: 22px; font-family: var(--mono); font-size: 12px; }
 .status-meta > div { display: flex; flex-direction: column; gap: 2px; }
 .status-meta label { font-size: 10px; color: var(--fg-3); text-transform: uppercase; letter-spacing: 0.08em; }
